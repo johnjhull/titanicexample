@@ -1,0 +1,225 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Mon Apr 23 21:31:46 2018
+
+@author: hullj
+"""
+from __future__ import division
+'''----------------------------------------------------------------------------
+BEGIN IMPORT BLOCK
+----------------------------------------------------------------------------'''
+
+import sys
+from collections import Counter
+import math
+
+
+import miscDataFunc
+
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+###Pull Data###
+train = pd.read_csv('../WithFamilyID/modified_train.csv')
+test = pd.read_csv('../WithFamilyID/modified_test.csv')
+test_ids = test.PassengerId
+#print "Original features list:"
+#print list(train)
+#SKLEARN Functions
+from sklearn.linear_model import LogisticRegression #logistic regression
+from sklearn.linear_model import Perceptron
+from sklearn import svm #support vector Machine
+from sklearn.ensemble import RandomForestClassifier #Random Forest
+from sklearn.neighbors import KNeighborsClassifier #KNN
+from sklearn.naive_bayes import GaussianNB #Naive bayes
+from sklearn.tree import DecisionTreeClassifier #Decision Tree
+from sklearn.model_selection import train_test_split #training and testing data split
+from sklearn import metrics #accuracy measure
+from sklearn.metrics import confusion_matrix #for confusion matrix
+from sklearn.ensemble import VotingClassifier
+from sklearn.ensemble import AdaBoostClassifier
+from sklearn.neural_network import MLPClassifier
+from sklearn.model_selection import GridSearchCV
+
+from sklearn.ensemble import AdaBoostClassifier,RandomForestClassifier
+from sklearn.ensemble import GradientBoostingClassifier,ExtraTreesClassifier
+
+from sklearn.svm import SVC
+from sklearn.metrics import make_scorer, accuracy_score
+from sklearn.model_selection import GridSearchCV
+from sklearn.decomposition import PCA
+from sklearn.pipeline import Pipeline
+from sklearn.feature_selection import SelectKBest,SelectFromModel
+
+'''----------------------------------------------------------------------------
+END IMPORT BLOCK
+----------------------------------------------------------------------------'''
+
+
+#print "Original features list:"
+#print list(train)
+'''----------------------------------------------------------------------------
+BEGIN FUNCTIONS
+----------------------------------------------------------------------------'''
+def get_features(df,features_list):
+    features = []
+    for item in list(df):
+        if item in features_list:
+            features.append(item)
+    out = df[features]
+    return out
+
+'''----------------------------------------------------------------------------
+END FUNCTIONS
+----------------------------------------------------------------------------'''
+
+'''----------------------------------------------------------------------------
+BEGIN FEATURE SELECTION
+----------------------------------------------------------------------------'''
+'''
+['PassengerId', 'Survived', 'Pclass', 'Name', 'Sex', 'Age', 'SibSp', 'Parch', 
+'Ticket', 'Fare', 'Cabin', 'Embarked', 'LastName', 'Title', 'FirstName', 
+'WithSpouse', 'SpouseIndex', 'CoupleNumber', 'Siblings', 'TicketGroup', 
+'TicketFreq', 'LastNameFreq', 'FareFreq', 'FamilySize', 'FamilyID', 
+'TicketNumber', 'TravelGroup', 'FamilyIDFreq', 'TravelGroupFreq', 'BinnedAge', 
+'TrueFare', 'TrueFareQuantile', 'TrueFareQuantileFreq']
+'''
+
+features_list = [#'PassengerId',
+                'Survived',
+                 #Family/Group
+                 #'GroupSurvival',
+                 #'GroupSurvivalConfidence',
+                 'GroupSurvivalGuess',
+                 'TravelGroup',
+                 'FamilySize',
+                 #'FamilyID',
+                 'TravelGroupFreq',
+                 #'Siblings','Parch',
+                 #Financial
+                 #'TrueFareQuantile',
+                 'FareQuantile',
+                 'Pclass',
+                 #Personal
+                 'Sex',
+                 'BinnedAge',
+                 'Title'
+                 ]
+
+#train.Age = train.Age.fillna(30)
+#test.Age = test.Age.fillna(30)
+
+train = get_features(train,features_list)
+test = get_features(test,features_list)
+
+'''----------------------------------------------------------------------------
+END FEATURE SELECTION
+----------------------------------------------------------------------------'''
+
+'''----------------------------------------------------------------------------
+BEGIN FEATURE PROCESSING/SCALING
+----------------------------------------------------------------------------'''
+features_list = ['Sex',
+                 #'TrueFareQuantile',
+                 'FareQuantile',
+                 'BinnedAge',
+                 'Title',
+                 ] 
+train, test = encode_string_features(train, test, features_list)
+
+features_list = list(train)
+#features_list.remove('PassengerId')
+features_list.remove('Survived')
+#features_list.remove('GroupSurvival')
+###
+#Try not scaling some features
+#features_list.remove('TravelGroup')
+features_list.remove('Sex')
+#features_list.remove('LastNameFreq')
+#features_list.remove('LastName')
+#features_list.remove('BinnedFare')
+#features_list.remove('Family')
+###
+
+train = scale_features(train,features_list)
+test = scale_features(test,features_list)
+
+
+'''----------------------------------------------------------------------------
+END FEATURE PROCESSING/SCALING
+----------------------------------------------------------------------------'''
+'''----------------------------------------------------------------------------
+BEGIN TRAIN/TEST SPLIT
+----------------------------------------------------------------------------'''
+
+features = train.drop(['Survived'], axis = 1)
+labels = train['Survived']
+
+test_ratio = .2
+
+features_train, features_test, labels_train, labels_test = train_test_split(
+        features, labels, test_size = test_ratio)
+
+'''----------------------------------------------------------------------------
+END TRAIN/TEST SPLIT
+----------------------------------------------------------------------------'''
+
+'''----------------------------------------------------------------------------
+BEGIN CLASSIFIER FITTING AND TESTING
+----------------------------------------------------------------------------'''
+clf = RandomForestClassifier()
+
+parameters = {'n_estimators': [9], 
+              'max_features': ['sqrt'], 
+              'criterion': ['gini'],
+              'max_depth': [5, 10], 
+              'min_samples_split': [2, 3, 5],
+              'min_samples_leaf': [1,5,8]
+             }
+
+clf = GridSearchCV(clf, param_grid=parameters)
+
+from sklearn.cross_validation import KFold
+
+def run_kfold(clf,df_feat,df_lab,n):
+    num_folds = len(df_feat)
+    kf = KFold(num_folds, n_folds=n)
+    outcomes = []
+    fold = 0
+    for train_index, test_index in kf:
+        fold += 1
+        X_train, X_test = df_feat.values[train_index], df_feat.values[test_index]
+        y_train, y_test = df_lab.values[train_index], df_lab.values[test_index]
+        clf.fit(X_train, y_train)
+        predictions = clf.predict(X_test)
+        accuracy = accuracy_score(y_test, predictions)
+        outcomes.append(accuracy)
+        print("Fold {0} accuracy: {1}".format(fold, accuracy))
+        try:
+            print clf.best_params_
+        except:
+            continue
+    mean_outcome = np.mean(outcomes)
+    print("Mean Accuracy: {0}".format(mean_outcome)) 
+
+print "EXECUTING K-FOLD CROSS VALIDATION"
+run_kfold(clf, features, labels, 10)
+
+'''----------------------------------------------------------------------------
+END CLASSIFIER FITTING AND TESTING
+----------------------------------------------------------------------------'''
+
+'''----------------------------------------------------------------------------
+DO A SUBMISSION
+----------------------------------------------------------------------------'''
+clf.fit(features,labels)
+    
+pred = clf.predict(test)
+
+output = pd.DataFrame({'PassengerId':test_ids,'Survived':pred})
+
+output.Survived = output.Survived.apply(lambda x: int(x))
+
+output.to_csv('titanic-predictions26.csv', index = False)
