@@ -1,0 +1,641 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Mon Apr 23 21:30:12 2018
+
+@author: hullj
+"""
+
+from __future__ import division
+import operator
+
+from collections import Counter
+import sys
+
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+import math
+#matplotlib inline
+from mpl_toolkits.mplot3d import Axes3D
+###Stop annoying warnings
+pd.options.mode.chained_assignment = None
+###My Functions###
+def add_series_frequency(df,key):
+    frequency_key = key + 'Freq'
+    df[frequency_key] = df.groupby(key)[key].transform('count')
+    return df
+
+###Pull Data###
+data_train = pd.read_csv('../train.csv')
+data_test = pd.read_csv('../test.csv')#modified with null survived
+###Make a combined, label free set for cluster analysis###
+
+
+data_all = pd.concat([data_train, data_test]).reset_index(drop=True)
+'''
+print (data_train_out[['TrueFareQuantileFreq', 'Survived']].groupby(['TrueFareQuantileFreq'], as_index=False).mean())
+'''
+'''----------------------------------------------------------------------------
+BEGIN GROUPING PASSENGERS INTO FAMILIES
+----------------------------------------------------------------------------'''
+
+###Add Last Name###
+def add_last_name(df):
+    df['LastName'] = df.Name.apply(lambda x: x.split(', ')[0])
+    return df
+
+data_all = add_last_name(data_all)
+###Add Title###
+def add_title(df):
+    df['Title'] = df.Name.apply(lambda x: x.split(', ')[1].split(' ')[0])
+    return df
+
+data_all = add_title(data_all)
+###Frequency Columns###
+def add_first_name(df):
+    df['FirstName'] = df.Name.apply(lambda x: x.split(', ')[1].split(' ')[1].split(' ')[0])
+    return df
+
+data_all = add_first_name(data_all)
+'''Try to Find the Families'''
+###Add Marriage Data###
+
+def find_marriages(df):
+    df['WithSpouse'] = np.nan
+    df['SpouseIndex'] = np.nan	
+    df['CoupleNumber'] = np.nan
+    couple_number = 0	
+    for i in range(len(df)):
+        if df['Title'][i] in ['Mrs.','Lady.']:
+            husband_list = []
+            first_name = df['FirstName'][i]
+            last_name = df['LastName'][i]
+            search_df = df.loc[df['LastName'] == last_name]                
+            index = search_df.index.values
+            if df['Title'][i] == 'Lady.':
+                df['WithSpouse'][index[0]] = 1
+                df['WithSpouse'][index[1]] = 1
+                df['SpouseIndex'][index[0]] = index[1]
+                df['SpouseIndex'][index[1]] = index[0]
+                df['CoupleNumber'][index[0]] = couple_number
+                df['CoupleNumber'][index[1]] = couple_number
+                couple_number += 1
+                continue
+            new_index = []
+            for ind in index:
+                if ind != i:
+                    new_index.append(ind)
+            for j in new_index:
+                if df['FirstName'][j] == first_name and df['Title'][j]!='Master.':
+                        husband_list.append(j)
+            if len(husband_list) == 1:
+                df['WithSpouse'][i] = 1
+                df['WithSpouse'][husband_list[0]] = 1
+                df['SpouseIndex'][i] = husband_list[0]
+                df['SpouseIndex'][husband_list[0]] = i
+                df['CoupleNumber'][i] = couple_number
+                df['CoupleNumber'][husband_list[0]] = couple_number
+                couple_number += 1
+            elif len(husband_list) > 1:
+                    if len(df.Name[husband_list[0]])<len(df.Name[husband_list[1]]):
+                        df['WithSpouse'][i] = 1
+                        df['WithSpouse'][husband_list[0]] = 1
+                        df['SpouseIndex'][i] = husband_list[0]
+                        df['SpouseIndex'][husband_list[0]] = i
+                        df['CoupleNumber'][i] = couple_number
+                        df['CoupleNumber'][husband_list[0]] = couple_number
+                        couple_number += 1
+                    else:
+                        df['WithSpouse'][i] = 1
+                        df['WithSpouse'][husband_list[1]] = 1
+                        df['SpouseIndex'][i] = husband_list[1]
+                        df['SpouseIndex'][husband_list[1]] = i
+                        df['CoupleNumber'][i] = couple_number
+                        df['CoupleNumber'][husband_list[1]] = couple_number
+                        couple_number += 1
+            else:
+                df['WithSpouse'][i] = 0
+    df.WithSpouse = df.WithSpouse.fillna(0)
+    df.SpouseIndex = df.SpouseIndex.fillna(-1)
+    df.CoupleNumber = df.CoupleNumber.fillna(-1)
+    df.SpouseIndex = df.SpouseIndex.apply(lambda x: int(x))
+    return df
+
+data_all = find_marriages(data_all)
+
+def add_DiCaprio(df):
+    df['DiCaprioNumber'] = -1.0
+    spouse_df = df.loc[df.WithSpouse == 1.0]
+    for ind in spouse_df.index.values:
+        if df.DiCaprioNumber[ind] == -1.0:
+            search_df = spouse_df.loc[spouse_df.CoupleNumber == spouse_df.CoupleNumber[ind]]
+            if len(search_df.loc[np.isnan(search_df.Survived) == False])>0:
+                mean_survive = search_df.Survived.mean()
+                for ind2 in search_df.index.values:
+                    df.DiCaprioNumber[ind2] = mean_survive
+    return df
+
+data_all =add_DiCaprio(data_all)
+    
+
+#Make Siblings
+data_all['Siblings'] = data_all['SibSp']-data_all['WithSpouse']
+
+
+###Ticket Freq
+#'hello world'[::-1]
+###Pick up here tomorrow,you were going to reverse the ticket numbers
+
+def ticket_group(df):
+    df['TicketGroup'] = np.nan
+    group_number = 0
+    for i in range(len(df)):
+        if np.isnan(df['TicketGroup'][i]):
+            ticket_number = df['Ticket'][i]
+            search_df = df.loc[df['Ticket'] == ticket_number]
+            index = search_df.index.values
+            for ind in index:
+                df['TicketGroup'][ind] = group_number
+            group_number += 1
+    return df
+
+data_all = ticket_group(data_all)
+
+###Ticket Freq###
+data_all = add_series_frequency(data_all,'Ticket')
+###Add last name freq
+data_all = add_series_frequency(data_all,'LastName')
+
+###Count Fare Correlation###
+
+data_all = add_series_frequency(data_all,'Fare')
+###Family Number###
+def add_family(df):
+    df['FamilySize'] = df.Parch+df.SibSp + 1
+    return df
+
+data_all = add_family(data_all)
+'''
+BEGIN FAMILY ASSIGNMENTS
+'''
+#Assign if last name frequency and family size agree.
+def assign_fam_1(df, family_number):
+    df['FamilyID'] = np.nan
+    #1.) If family size  = last name freq, assign family
+    for i in range(len(df)):
+        if np.isnan(df['FamilyID'][i]) and (df['FamilySize'][i] == df['LastNameFreq'][i]):
+            search_df = df.loc[df['LastName'] == df['LastName'][i]]
+            index = search_df.index.values
+            for ind in index:
+                df['FamilyID'][ind] = family_number
+            family_number += 1
+    return df, family_number
+
+family_number = 0
+
+data_all, family_number = assign_fam_1(data_all,family_number)
+
+print "After assignment %d, %d families have been assigned."%(1,len(data_all.loc[np.isnan(data_all.FamilyID)==False]))
+#don't forget the lonely people.
+#Best make it negative; that way they won't muddy the votes.
+def assign_fam_2(df, family_number):
+    reduced_df = df.loc[np.isnan(df.FamilyID)]
+    for i in reduced_df.index.values:
+        if np.isnan(df['FamilyID'][i]) and (df['FamilySize'][i] == 1):
+            df['FamilyID'][i] = family_number
+            family_number += 1
+    return df, family_number
+
+data_all, family_number = assign_fam_2(data_all,family_number)
+
+print "After assignment %d, %d families have been assigned."%(2,len(data_all.loc[np.isnan(data_all.FamilyID)==False]))
+
+#Assign if ticket frequency and family size agree.
+def assign_fam_3(df, family_number):
+    reduced_df = df.loc[np.isnan(df.FamilyID)]
+    for i in reduced_df.index.values:
+        if np.isnan(df['FamilyID'][i]) and (df['FamilySize'][i] == df['TicketFreq'][i]):
+            search_df = df.loc[df['Ticket'] == df['Ticket'][i]]
+            index = search_df.index.values
+            for ind in index:
+                df['FamilyID'][ind] = family_number
+            family_number += 1
+    return df, family_number
+
+data_all, family_number = assign_fam_3(data_all,family_number)
+
+print "After assignment %d, %d families have been assigned."%(3,len(data_all.loc[np.isnan(data_all.FamilyID)==False]))
+
+# Get the ones that are unassigned and now have last name freq meeting the criteria.
+def assign_fam_4(df, family_number):
+    reduced_df = df.loc[np.isnan(df.FamilyID)]
+    #now need to count family name occurence in the new table
+    reduced_df['LastNameFreq'] = reduced_df.groupby('LastName')['LastName'].transform('count')
+    for i in reduced_df.index.values:
+        if np.isnan(df['FamilyID'][i]) and (reduced_df['FamilySize'][i] == reduced_df['LastNameFreq'][i]):
+            last_name = df['LastName'][i]
+            search_df = reduced_df.loc[reduced_df['LastName'] == last_name]
+            index = search_df.index.values
+            for ind in index:
+                df['FamilyID'][ind] = family_number
+            family_number += 1
+    return df, family_number
+
+data_all, family_number = assign_fam_4(data_all,family_number)
+
+print "After assignment %d, %d families have been assigned."%(4,len(data_all.loc[np.isnan(data_all.FamilyID)==False]))
+
+# Get the ones that are unassigned and now have ticket freq meeting the criteria.
+def assign_fam_5(df, family_number):
+    reduced_df = df.loc[np.isnan(df.FamilyID)]
+    #now need to count ticket occurence in the new table
+    reduced_df['TicketFreq'] = reduced_df.groupby('Ticket')['Ticket'].transform('count')
+    for i in reduced_df.index.values:
+        if np.isnan(df['FamilyID'][i]) and (reduced_df['FamilySize'][i] == reduced_df['TicketFreq'][i]):
+            ticket = df['Ticket'][i]
+            search_df = reduced_df.loc[reduced_df['Ticket'] == ticket]
+            index = search_df.index.values
+            for ind in index:
+                df['FamilyID'][ind] = family_number
+            family_number += 1
+    return df, family_number
+
+data_all, family_number = assign_fam_5(data_all,family_number)
+
+print "After assignment %d, %d families have been assigned."%(5,len(data_all.loc[np.isnan(data_all.FamilyID)==False]))
+
+
+#Modify ticket by dropping last, apply ticket/family size correlation
+def assign_fam_6(df, family_number):
+    reduced_df = df.loc[np.isnan(df.FamilyID)]
+    #chop last and count ticket occurence in the new table
+    reduced_df.Ticket = df.Ticket.apply(lambda x: x[:-1])
+    reduced_df['TicketFreq'] = reduced_df.groupby('Ticket')['Ticket'].transform('count')
+    for i in reduced_df.index.values:
+        if np.isnan(df['FamilyID'][i]) and (reduced_df['FamilySize'][i] == reduced_df['TicketFreq'][i]):
+            ticket = reduced_df['Ticket'][i]
+            search_df = reduced_df.loc[reduced_df['Ticket'] == ticket]
+            index = search_df.index.values
+            for ind in index:
+                df['FamilyID'][ind] = family_number
+            family_number += 1
+    return df, family_number
+
+data_all, family_number = assign_fam_6(data_all,family_number)
+
+print "After assignment %d, %d families have been assigned."%(6,len(data_all.loc[np.isnan(data_all.FamilyID)==False]))
+#Modify ticket by rounding, apply ticket/family size correlation
+def assign_fam_7(df, family_number):
+    reduced_df = df.loc[np.isnan(df.FamilyID)]
+    for j in reduced_df.index.values:
+        try:
+            reduced_df.Ticket[j] = round(float(reduced_df.Ticket[j])/10)*10
+        except:
+            continue
+    reduced_df['TicketFreq'] = reduced_df.groupby('Ticket')['Ticket'].transform('count')
+    for i in reduced_df.index.values:
+        if np.isnan(df['FamilyID'][i]) and (reduced_df['FamilySize'][i] == reduced_df['TicketFreq'][i]):
+            ticket = reduced_df['Ticket'][i]
+            search_df = reduced_df.loc[reduced_df['Ticket'] == ticket]
+            index = search_df.index.values
+            for ind in index:
+                df['FamilyID'][ind] = family_number
+            family_number += 1
+    return df, family_number
+
+data_all, family_number = assign_fam_7(data_all,family_number)
+
+print "After assignment %d, %d families have been assigned."%(7,len(data_all.loc[np.isnan(data_all.FamilyID)==False]))
+#Modify ticket by rounding, translated to account for series of tickets
+#close to 0 mod 10 apply ticket/family size correlation
+def assign_fam_8(df, family_number):
+    reduced_df = df.loc[np.isnan(df.FamilyID)]
+    for j in reduced_df.index.values:
+        try:
+            reduced_df.Ticket[j] = round(float(reduced_df.Ticket[j])/10+.4)
+        except:
+            continue
+    reduced_df['TicketFreq'] = reduced_df.groupby('Ticket')['Ticket'].transform('count')
+    for i in reduced_df.index.values:
+        if np.isnan(df['FamilyID'][i]) and (reduced_df['FamilySize'][i] == reduced_df['TicketFreq'][i]):
+            ticket = reduced_df['Ticket'][i]
+            search_df = reduced_df.loc[reduced_df['Ticket'] == ticket]
+            index = search_df.index.values
+            for ind in index:
+                df['FamilyID'][ind] = family_number
+            family_number += 1
+    return df, family_number
+
+data_all, family_number = assign_fam_8(data_all,family_number)
+
+print "After assignment %d, %d families have been assigned."%(8,len(data_all.loc[np.isnan(data_all.FamilyID)==False]))
+#Finally, apply the rounded ticket criteria to remaining 14, but ignore family size.
+#This will assign the remaining ten to positive but lonely families. 
+def assign_fam_9(df, family_number):
+    reduced_df = df.loc[np.isnan(df.FamilyID)]
+    for j in reduced_df.index.values:
+        try:
+            reduced_df.Ticket[j] = round(float(reduced_df.Ticket[j])/10)*10
+        except:
+            continue
+    reduced_df['TicketFreq'] = reduced_df.groupby('Ticket')['Ticket'].transform('count')
+    for i in reduced_df.index.values:
+        if np.isnan(df['FamilyID'][i]):
+            ticket = reduced_df['Ticket'][i]
+            search_df = reduced_df.loc[reduced_df['Ticket'] == ticket]
+            index = search_df.index.values
+            for ind in index:
+                df['FamilyID'][ind] = family_number
+            family_number += 1
+    return df, family_number
+
+data_all, family_number = assign_fam_9(data_all,family_number)
+
+print "After assignment %d, %d have been assigned to families."%(9,len(data_all.loc[np.isnan(data_all.FamilyID)==False]))
+print " "
+print "The passengers have been grouped into %d families."%int(data_all.FamilyID.max())
+
+#Make all lonely assignments negative
+def negate_lonely_id(df):
+    neg_df = df.loc[df.FamilySize == 1]
+    for ind in neg_df.index.values:
+        df.FamilyID[ind] = -df.FamilyID[ind]
+    return df
+
+data_all = negate_lonely_id(data_all)
+
+'''----------------------------------------------------------------------------
+END GROUPING PASSENGERS INTO FAMILIES
+----------------------------------------------------------------------------'''
+'''----------------------------------------------------------------------------
+BEGIN ADD TRAVEL GROUPS
+----------------------------------------------------------------------------'''
+#We'll keep this simple. 
+#Copy family id's. 
+#We are trying to group here family size=1
+
+#Make a letterless ticket column
+
+def add_ticket_number(df):
+    df['TicketNumber'] = np.nan
+    df.TicketNumber = df.Ticket.apply(lambda x: x.split(' ')[-1])
+    index = df.loc[df.TicketNumber == 'LINE'].index.values
+    for ind in index:
+        df.TicketNumber[ind] = 0 
+    df.TicketNumber = df.TicketNumber.apply(lambda x: int(x))
+    return df
+
+data_all = add_ticket_number(data_all)
+
+def get_travel_groups(df):
+    travel_group = family_number + 1
+    df['TravelGroup'] = np.nan
+    df = add_series_frequency(df,'FamilyID')
+    index1 = df.loc[df.FamilyIDFreq>1].index.values
+    for ind in index1:
+        df.TravelGroup[ind] = df.FamilyID[ind]
+    reduce_df = df.loc[df.FamilyIDFreq == 1]
+    for ind in reduce_df.index.values:
+        if np.isnan(df.TravelGroup[ind]):
+            num = df.TicketNumber[ind]
+            search_df = reduce_df.loc[abs(reduce_df.TicketNumber - num)<5]
+            #Handle Case: Everyone nearby has empty TravelGroup
+            if len(search_df.loc[np.isnan(search_df.TravelGroup)])==len(search_df):
+                for ind2 in search_df.index.values:
+                    df.TravelGroup[ind2] = travel_group
+                travel_group += 1
+            #Handle Case: There's a nonempty guy nearby.
+            else:
+                search_df2 = search_df.loc[np.isnan(search_df[search_df.TravelGroup]) == False]
+                search_df2.TicketNumber = search_df2.TicketNumber.apply(lambda x: abs(x-num))
+                min_ticket = search_df2.TicketNumber.min()
+                search_df3 = search_df2.loc[search_df2.TicketNumber == min_ticket]
+                df.TravelGroup[ind] = df.TravelGroup[search_df3.index.values[0]]
+    return df
+
+data_all = get_travel_groups(data_all)
+
+data_all = add_series_frequency(data_all,'TravelGroup')
+'''----------------------------------------------------------------------------
+END ADD TRAVEL GROUPS
+----------------------------------------------------------------------------'''
+
+'''----------------------------------------------------------------------------
+BEGIN ADD TRAVEL GROUP SURVIVAL NUMBER
+----------------------------------------------------------------------------'''
+#The purpose of this is to add an actual number for how many survived
+#given a specific travel group. 
+#Take a travel group, make a mean number for those present, assign to all.
+def add_group_survival(df):
+    mean_total_survive = df.Survived.mean()
+    df['GroupSurvival'] = np.nan
+    df['GroupSurvivalConfidence'] = np.nan
+    df['GroupSurvivalMult'] = np.nan
+    df['TempSurvive'] = np.nan
+    df.TempSurvive = df.Survived.fillna(mean_total_survive)
+    for ind in df.index.values:
+        if np.isnan(df.GroupSurvival[ind]):
+            group_id = df.TravelGroup[ind]
+            reduce_df = df.loc[df.TravelGroup == group_id]
+            con_number = len(reduce_df.loc[np.isnan(reduce_df.Survived) == False])/len(reduce_df)
+            mean_survive = reduce_df.TempSurvive.mean()
+            for ind2 in reduce_df.index.values:
+                df.GroupSurvival[ind2] = mean_survive
+                df.GroupSurvivalConfidence[ind2] = con_number
+                df.GroupSurvivalMult[ind2] = con_number*mean_survive
+    df = df.drop(['TempSurvive'], axis = 1)
+    return df
+
+data_all = add_group_survival(data_all)
+
+#Note: this hard overfits, and isn't what others have done. 
+#Rework so that only the all or none is reflected. 
+'''----------------------------------------------------------------------------
+END ADD TRAVEL GROUP SURVIVAL NUMBER
+----------------------------------------------------------------------------'''
+'''----------------------------------------------------------------------------
+BEGIN SMARTER TRAVEL GROUP SURVIVAL NUMBER
+----------------------------------------------------------------------------'''
+default = 0.5
+#Have everyone else vote.
+def add_group_survival_guess(df):
+    mean_total_survive = df.Survived.mean()
+    df['GroupSurvivalGuess'] = default
+    for ind in df.index.values:
+        group_id = df.TravelGroup[ind]
+        reduce_df = df.loc[df.TravelGroup == group_id].drop(ind)
+        if len(reduce_df)>0:
+            #look at others and ask about survival
+            #Assign 1 if most of family survived
+            #0 if most did not
+            #leave .5 if too many nan. At least half.
+            nonempty = reduce_df.loc[np.isnan(reduce_df.Survived) == False]
+            if len(nonempty)/len(reduce_df)>.5:
+                mean_survive = nonempty.Survived.mean()
+                if mean_survive > .7:
+                    df.GroupSurvivalGuess[ind] = 1.0
+                elif mean_survive < .25:
+                    df.GroupSurvivalGuess[ind] = 0.0
+    return df
+
+data_all = add_group_survival_guess(data_all)
+
+
+'''----------------------------------------------------------------------------
+BEGIN SMARTER TRAVEL GROUP SURVIVAL NUMBER
+----------------------------------------------------------------------------'''
+
+'''----------------------------------------------------------------------------
+BEGIN NUMERICAL FEATURE ENGINEERING
+----------------------------------------------------------------------------'''
+#Age bins
+def num_series_bin(s,bin_tuple,group_list):
+    unk = float(min(bin_tuple)-1)
+    s = s.fillna(unk)
+    bins = (unk-.5,)+bin_tuple
+    group_list = ['Unknown'] + group_list
+    categories = pd.cut(s , bins, labels = group_list)
+    return categories
+
+bin_tuple = (0, 5, 12, 18, 25, 35, 60, 120)
+group_list = ['Baby','Child','Teen','Student','YoungAdult','Adult','Senior']
+
+data_all['BinnedAge'] = num_series_bin(data_all.Age,bin_tuple,group_list)
+#clean TRUE FARE to account for numerous on same ticket.
+def add_true_fare(df):
+    df.Fare = df.Fare.fillna(0)
+    df['TrueFare'] = np.nan
+    for i in df.index.values:
+        df.TrueFare[i] = df.Fare[i]/df.TicketFreq[i]
+    return df
+
+data_all = add_true_fare(data_all)
+#True Fare Bins
+def series_quantile_bin(s,n):
+    series_min = s.min()
+    unk = series_min-1
+    s = s.fillna(unk+.5)
+    bin_tuple = (series_min,)
+    for i in range(1,n):
+        mark = s.quantile(i/n)
+        bin_tuple = bin_tuple+(mark,)
+    bin_tuple = (unk,)+bin_tuple+(s.max()+1,)
+    group_list = ['Unknown']
+    for i in range(1,n+1):
+        group_list.append(str(i)+'th-'+str(n)+'-tile')
+    quantiles = pd.cut(s , bin_tuple, labels = group_list)
+    return quantiles
+
+def bin_true_fares(df):
+    df['TrueFareQuantile'] = series_quantile_bin(df.TrueFare,5)
+    return df
+
+def bin_fares(df):
+    df['FareQuantile'] = series_quantile_bin(df.Fare,5)
+    return df
+
+data_all = bin_fares(data_all)
+data_all = bin_true_fares(data_all)
+
+data_all = add_series_frequency(data_all,'TrueFareQuantile')
+
+'''----------------------------------------------------------------------------
+END NUMERICAL FEATURE ENGINEERING
+----------------------------------------------------------------------------'''
+
+'''----------------------------------------------------------------------------
+BEGIN ENCODE NONNUMERICAL FEATURES
+----------------------------------------------------------------------------'''
+def encode(df, values_key_list, labels_key):
+    #get list of values an labels
+    for values_key in values_key_list:
+        category = 0
+        print "Encoding: " + values_key
+        try:
+            df[values_key] = df[values_key].fillna('NaN')
+        except:
+            print "Error filling null values."
+            df[values_key] = df[values_key].cat.add_categories(['NaN'])
+            df[values_key] = df[values_key].fillna('NaN')
+            category = 1
+        values_set = list(set(df[values_key].values))
+        labels_set = list(set(df[labels_key].values))
+        labels_set = sorted(labels_set)
+    
+    #map the labels_set to ordered indices
+        label_indices = [x for x,_ in enumerate(labels_set)]
+        value_indices = [x for x,_ in enumerate(values_set)]
+    
+        df['TempLabels'] = 0.
+        for label_index in label_indices:
+            filtered_df = df.loc[df[labels_key] == labels_set[label_index]]
+            for index in filtered_df.index.values:
+                df.TempLabels[index] = label_index
+        means = []
+    #mean test against the label_key
+        for value_index, value in zip(value_indices, values_set):
+            filtered_df = df.loc[df[values_key] == value]
+            mean = filtered_df.TempLabels.mean()
+            means.append((value_index, mean))
+    #order means according to means
+        means.sort(key = operator.itemgetter(1))
+    #impute the order on the df
+        means_indices = [x for x,_ in enumerate(means)]
+        if category == 1:
+            df[values_key] = df[values_key].cat.add_categories(means_indices)
+        for index in means_indices:
+            value = values_set[means[index][0]]
+            filtered_df = df.loc[df[values_key] == value]
+            for index1 in filtered_df.index.values:
+                df[values_key][index1] = index 
+        df = df.drop(['TempLabels'], axis = 1)
+    return df
+
+values_key_list = ['Pclass',
+                   'Name',
+                   'Sex',
+                   'Ticket',
+                   'Cabin',
+                   'Embarked',
+                   'LastName',
+                   'Title',
+                   'FirstName',
+                   'CoupleNumber',
+                   'TicketGroup',
+                   'TicketFreq',
+                   'LastNameFreq',
+                   'FareFreq',
+                   'FamilySize',
+                   'FamilyID',
+                   'TicketNumber',
+                   'TravelGroup',
+                   'GroupSurvival',
+                   'BinnedAge',
+                   'FareQuantile',
+                   'TrueFareQuantile'
+                   ]
+
+data_all = encode(data_all, values_key_list,'Survived')
+
+'''----------------------------------------------------------------------------
+END ENCODE NONNUMERICAL FEATURES
+----------------------------------------------------------------------------'''
+###Check indices
+for i in data_all.index.values:
+    if i+1 != data_all.PassengerId[i]:
+        print "Bad index at %d." % i
+        break
+    
+data_train_out = data_all.loc[:890]
+data_test_out = data_all.loc[891:]
+data_test_out = data_test_out.drop(['Survived'], axis = 1)
+###Dump###
+print "Dumping"
+data_all.to_csv('combined_out.csv', index = False)
+data_train_out.to_csv('modified_train.csv', index = False)
+data_test_out.to_csv('modified_test.csv', index = False)
+print "Dumping done."
+
+
